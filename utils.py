@@ -6,8 +6,10 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 
 import config
+from schemas import Question, Document
 
 
 def words(text: str) -> set[str]:
@@ -35,15 +37,19 @@ def find_file(*names: str) -> Path:
     raise FileNotFoundError(f"Не найден один из файлов: {', '.join(names)}")
 
 
-def load_questions(path: Path) -> list[tuple[str, str]]:
+
+def load_questions(path: Path) -> list[Question]:
     with path.open(encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         if not reader.fieldnames or not {"id", "question"}.issubset(reader.fieldnames):
             raise ValueError("В questions.csv нужны колонки id и question")
     
-        rows = [(str(r["id"]).strip(), str(r["question"]).strip()) for r in reader]
+        rows = [
+            Question(id=str(r["id"]).strip(), content=str(r["question"]).strip()) 
+            for r in reader
+        ]
     
-    if not rows or any(not qid for qid, _ in rows):
+    if not rows or any(not q.id for q in rows):
         raise ValueError("В questions.csv отсутствуют вопросы или id")
     
     return rows
@@ -62,8 +68,8 @@ def read_docx(raw: bytes) -> str:
     )
 
 
-def load_documents(path: Path) -> list[tuple[str, str]]:
-    documents = []
+def load_documents(path: Path) -> list[Document]:
+    documents: list[Document] = []
 
     with zipfile.ZipFile(path) as archive:
         for name in sorted(archive.namelist()):
@@ -82,7 +88,7 @@ def load_documents(path: Path) -> list[tuple[str, str]]:
                 continue
             
             if text.strip():
-                documents.append((name, text.strip()))
+                documents.append(Document(name=name, text=text.strip()))
     
     if not documents:
         raise ValueError("В архиве базы знаний нет читаемых документов")
@@ -90,11 +96,11 @@ def load_documents(path: Path) -> list[tuple[str, str]]:
     return documents
 
 
-def run_workers(questions: list[tuple[str, str]], work):
+def run_workers(questions: list[Question], work):
     answers = [config.FALLBACK] * len(questions)
     
     with ThreadPoolExecutor(max_workers=config.MAX_WORKERS) as pool:
-        futures = [pool.submit(work, i, question) for i, (_, question) in enumerate(questions)]
+        futures = [pool.submit(work, i, question.content) for i, question in enumerate(questions)]
     
         for finished, future in enumerate(as_completed(futures), 1):
             index, answer = future.result()
@@ -107,14 +113,14 @@ def run_workers(questions: list[tuple[str, str]], work):
 
 
 def write_submission_file(
-    questions: list[tuple[str, str]], 
+    questions: list[Question], 
     answers: list[str],
 ) -> None:
     with open("submission.csv", "w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f, quoting=csv.QUOTE_ALL, lineterminator="\n")
         writer.writerow(["id", "answer"])
     
-        for i, (qid, _) in enumerate(questions):
-            writer.writerow([qid, answers[i]])
+        for i, question in enumerate(questions):
+            writer.writerow([question.id, answers[i]])
     
     print(f"Создан submission.csv: {len(questions)} ответов", flush=True)

@@ -14,6 +14,7 @@ import httpx
 
 import config
 import utils
+from schemas import Question, Document
 
 
 def post(client: httpx.Client, path: str, key: str, payload: dict) -> dict:
@@ -55,34 +56,34 @@ def embeddings(client: httpx.Client, texts: list[str]) -> list[list[float]]:
     return vectors  # type: ignore[return-value]
 
 
-def rerank(client: httpx.Client, question: str, docs: list[tuple[str, str]]) -> list[int]:
+def rerank(client: httpx.Client, question: Question, candidates: list[Document]) -> list[int]:
     """Пример вызова RERANKER_MODEL через POST /rerank."""
     result = post(client, "/rerank", config.RERANK_KEY, {
         "model": config.RERANKER_MODEL,
-        "query": question,
-        "documents": [name + "\n" + utils.snippet(text) for name, text in docs],
-        "top_n": min(config.RERANKER_TOP_N, len(docs)),
+        "query": question.content,
+        "documents": [candidate.name + "\n" + utils.snippet(candidate.text) for candidate in candidates],
+        "top_n": min(config.RERANKER_TOP_N, len(candidates)),
     })
     
     items = result.get("results", result.get("data", []))
     indices = [int(item["index"]) for item in items]
     
-    return [i for i in indices if 0 <= i < len(docs)][:config.RERANKER_TOP_N]
+    return [i for i in indices if 0 <= i < len(candidates)][:config.RERANKER_TOP_N]
 
 
-def select_documents(client: httpx.Client, question: str,
-                     documents: list[tuple[str, str]]) -> list[tuple[str, str]]:
+def select_documents(client: httpx.Client, question: Question,
+                     documents: list[Document]) -> list[Document]:
     # Простая предварительная выборка по совпадению слов; не полноценный RAG.
-    query_words = utils.words(question)
+    query_words = utils.words(question.content)
     candidates = sorted(
         documents,
-        key=lambda d: len(query_words & utils.words(d[0] + " " + d[1])),
+        key=lambda d: len(query_words & utils.words(d.name + " " + d.text)),
         reverse=True,
     )[:config.TOP_K]
 
     # Шаг 1: демонстрация использования эмбеддера.
     try:
-        vectors = embeddings(client, [question] + [utils.snippet(text) for _, text in candidates])
+        vectors = embeddings(client, [question.content] + [utils.snippet(document.text) for document in candidates])
         query_vec = vectors[0]
         
         scores = [sum(a * b for a, b in zip(query_vec, vec)) for vec in vectors[1:]]
@@ -103,14 +104,14 @@ def select_documents(client: httpx.Client, question: str,
     return candidates[:config.RERANKER_TOP_N]
 
 
-def generate(client: httpx.Client, question: str, docs: list[tuple[str, str]]) -> str:
+def generate(client: httpx.Client, question: Question, documents: list[Document]) -> str:
     """Пример вызова LLM_MODEL через POST /chat/completions."""
-    context = "\n\n".join(name + "\n" + utils.snippet(text) for name, text in docs)
+    context = "\n\n".join(document.name + "\n" + utils.snippet(document.text) for document in documents)
     payload = {
         "model": config.LLM_MODEL,
         "messages": [
             {"role": "system", "content": "Ответь на вопрос по приложенным фрагментам. Не выдумывай юридические нормы. Если ответа нет, сообщи об этом."},
-            {"role": "user", "content": "Фрагменты:\n" + context + "\n\nВопрос:\n" + question},
+            {"role": "user", "content": "Фрагменты:\n" + context + "\n\nВопрос:\n" + question.content},
         ],
         "temperature": config.TEMPERATURE,
         "max_tokens": config.MAX_TOKENS,
@@ -141,7 +142,7 @@ def main() -> None:
     
     print(f"Вопросы: {len(questions)}; документы: {len(documents)}; TOP_K={config.TOP_K}", flush=True)
 
-    def work(position: int, question: str) -> tuple[int, str]:
+    def work(position: int, question: Question) -> tuple[int, str]:
         try:
             with httpx.Client(timeout=90.0) as client:
                 selected = select_documents(client, question, documents)
