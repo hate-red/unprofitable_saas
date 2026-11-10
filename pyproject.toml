@@ -1,7 +1,0 @@
-[project]
-name = "unprofitable-saas"
-version = "0.1.0"
-description = "This is our RAG AI SaaS"
-readme = "README.md"
-requires-python = ">=3.14"
-dependencies = []
