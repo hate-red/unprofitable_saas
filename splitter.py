@@ -6,6 +6,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from schemas import Document
 
+
 type_rules = [
     (["договор аренды"],                              "договор аренды"),
     (["договор поставки"],                            "договор поставки"),
@@ -16,12 +17,15 @@ type_rules = [
     (["служебная записка"],                           "служебная записка"),
 ]
 
+
 def classify(stem: str, head: str) -> str:
     hay = (stem + " " + head[:300]).lower()
     for kws, doc_type in type_rules:
         if any(k in hay for k in kws):
             return doc_type
     return "прочее"
+
+
 
 def extract_meta(path: Path, text: str) -> dict:
     stem = path.stem.split("__")[-1]
@@ -34,6 +38,7 @@ def extract_meta(path: Path, text: str) -> dict:
     number_doc = re.search(r"\s*([А-ЯA-Z]{1,4}-\d{2,4}/\d{4})", head)
     if number_doc:
         meta["doc_id"] = number_doc.group(0)
+    
     if meta["doc_type"] == "регламент":
         low = text[:400].lower()
         meta["status"] = "утратил силу" if "утратил силу" in low else "действующий"
@@ -46,26 +51,26 @@ def extract_meta(path: Path, text: str) -> dict:
 
         m = re.search(r"утрачивает силу(?:\s+с)?\s+(\d{2}\.\d{2}\.\d{4})", head, re.I)
         meta["effective_to"] = m.group(1) if m else None
+    
     return meta
 
-def split_documents(knowledge_base: list[Document]) -> list[Document]:
-    splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-        chunk_size=1000,
-        chunk_overlap=150,
-        separators=["\n\n",
-            r"\n(?=Статья\s+\d+)",
-            r"\n(?=Часть\s+\d+)",
-            r"\n(?=\d+\.\s)",
-            r"\n(?=\d+\.\d+\.)",
-            "\n", ". ", " ", "",],
-        keep_separator=True,
-        is_separator_regex=True,
-        )
 
-    docs = []
-    for doc in knowledge_base:
-        lc_doc = LCDocument(page_content=doc.text, metadata=extract_meta(Path(doc.name), doc.text))
-        docs.append(lc_doc)
+_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+    chunk_size=1000,
+    chunk_overlap=150,
+    separators=["\n\n",
+        r"\n(?=Статья\s+\d+)",
+        r"\n(?=Часть\s+\d+)",
+        r"\n(?=\d+\.\s)",
+        r"\n(?=\d+\.\d+\.)",
+        "\n", ". ", " ", "",],
+    keep_separator=True,
+    is_separator_regex=True,
+)
 
-    chunks = splitter.split_documents(docs)
+
+def split_document(doc: Document) -> list[LCDocument]:
+    lc_doc = LCDocument(page_content=doc.text, metadata=extract_meta(Path(doc.name), doc.text))
+    chunks = _splitter.split_documents([lc_doc])
+    
     return chunks
