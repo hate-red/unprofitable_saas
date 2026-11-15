@@ -1,0 +1,20 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      LLM_API_KEY: ${LLM_API_KEY}
+      # Необязательные overrides (см. README):
+      EMBEDDER_API_KEY: ${EMBEDDER_API_KEY:-}
+      RERANKER_API_KEY: ${RERANKER_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      EMB_MODEL: ${EMB_MODEL:-}
+      RERANKER_MODEL: ${RERANKER_MODEL:-}
+    volumes:
+      - ./data:/app/data:ro      # questions.csv, kb.zip
+      - qdrant-data:/app/qdrant_chunks
+
+volumes:
+  qdrant-data:

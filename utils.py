@@ -117,7 +117,7 @@ def run_workers(
     answers = [config.FALLBACK] * len(questions)
     
     with ThreadPoolExecutor(max_workers=config.MAX_WORKERS) as pool:
-        futures = [pool.submit(work, i, question.content, chunks_per_question[i]) for i, question in enumerate(questions)]
+        futures = [pool.submit(work, i, question, chunks_per_question[i]) for i, question in enumerate(questions)]
     
         for finished, future in enumerate(as_completed(futures), 1):
             index, answer = future.result()
