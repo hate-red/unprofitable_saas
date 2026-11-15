@@ -63,3 +63,5 @@ websockets==17.4
 xxhash==4.1.0
 yarl==1.25.1
 zstandard==0.25.0
+fastapi==0.116.1
+uvicorn==0.35.0

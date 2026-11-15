@@ -32,7 +32,7 @@ def rerank(client: httpx.Client, question: Question, candidates: list[Document])
 
 def select_documents(client: httpx.Client, question: Question) -> list[Document]:
     # Step 1: DB search.
-    candidates = search_qdrant_hybrid(question)
+    candidates = search_qdrant_hybrid(question, limit=config.TOP_K)
     
     # Step 2: Reranker.
     try:
