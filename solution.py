@@ -32,11 +32,8 @@ def rerank(client: httpx.Client, question: Question, candidates: list[Document])
 
 def select_documents(client: httpx.Client, question: Question) -> list[Document]:
     # Step 1: DB search.
-    try:
-        candidates = search_qdrant_hybrid(question)
-    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
-        print(f"Embeddings недоступны: {type(exc).__name__}; используем поиск по словам", file=sys.stderr)
-
+    candidates = search_qdrant_hybrid(question)
+    
     # Step 2: Reranker.
     try:
         indices = rerank(client, question, candidates) # type: ignore
