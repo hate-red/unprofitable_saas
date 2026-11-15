@@ -9,6 +9,7 @@ from contextlib import closing
 
 import utils
 import splitter
+from schemas import Question, Document
 
 
 COLLECTION = "kb_chunks"
@@ -150,14 +151,14 @@ def view_qdrant(
 
 
 def search_qdrant_vector(
-    question: str,
+    question: Question,
     limit: int = 5,
     score_threshold: float | None = None,
 ) -> list[models.ScoredPoint]:
     """Search the collection using a vector embedding of the question.
 
     Args:
-        question: Text to embed and use as the vector query.
+        question: `Question` to embed and use as the vector query.
         limit: Maximum number of matching points to return.
         score_threshold: Optional minimum score for returned points.
 
@@ -165,7 +166,7 @@ def search_qdrant_vector(
         Matching points, including their payloads but not their vectors.
     """
     with closing(QdrantClient(path=QDRANT_PATH)) as client:
-        query_vector = embedder.embed_query(question)
+        query_vector = embedder.embed_query(question.content)
 
         result = client.query_points(
             collection_name=COLLECTION,
@@ -179,11 +180,11 @@ def search_qdrant_vector(
         return result.points
 
 
-def search_qdrant_text(question: str, limit: int = 5) -> list[models.ScoredPoint]:
+def search_qdrant_text(question: Question, limit: int = 5) -> list[models.ScoredPoint]:
     """Search the collection using its indexed text content.
 
     Args:
-        question: Text query to match against the ``content`` field.
+        question: `Question` query to match against the ``content`` field.
         limit: Maximum number of matching points to return.
 
     Returns:
@@ -192,7 +193,7 @@ def search_qdrant_text(question: str, limit: int = 5) -> list[models.ScoredPoint
     with closing(QdrantClient(path=QDRANT_PATH)) as client:
         result = client.query_points(
             collection_name=COLLECTION,
-            query=models.TextQuery(text=question),
+            query=models.TextQuery(text=question.content),
             using="content",
             limit=limit,
             with_payload=True,
@@ -201,14 +202,14 @@ def search_qdrant_text(question: str, limit: int = 5) -> list[models.ScoredPoint
 
 
 def search_qdrant_hybrid(
-    question: str, 
+    question: Question, 
     limit: int = 5, 
     prefetch_limit: int = 20
 ) -> list[models.ScoredPoint]:
     """Search using text and vector queries, combining results with RRF.
 
     Args:
-        question: Text used for both the text query and vector embedding.
+        question: `Question` used for both the text query and vector embedding.
         limit: Maximum number of fused results to return.
         prefetch_limit: Maximum number of candidates to fetch for each query
             before fusion.
@@ -216,14 +217,14 @@ def search_qdrant_hybrid(
     Returns:
         Fused matching points with their payloads.
     """
-    dense_vector = embedder.embed_query(question)
+    dense_vector = embedder.embed_query(question.content)
 
     with closing(QdrantClient(path=QDRANT_PATH)) as client:
         result = client.query_points(
             collection_name=COLLECTION,
             prefetch=[
                 models.Prefetch(
-                    query=models.TextQuery(text=question),
+                    query=models.TextQuery(text=question.content),
                     using="content",
                     limit=prefetch_limit,
                 ),
@@ -255,7 +256,8 @@ if __name__ == '__main__':
     view_qdrant(limit=5, show_vector=True)
 
     print("== 4. Поиск по Qdrant ==", flush=True)
-    results = search_qdrant_text("Какая арендная плата по договору с ООО «Северный Склад» и до какого числа её нужно вносить?", limit=3)
+    question = Question(id='1', content='Какая арендная плата по договору с ООО «Северный Склад» и до какого числа её нужно вносить?')
+    results = search_qdrant_text(question, limit=3)
 
     for match in results:
         print(match)
