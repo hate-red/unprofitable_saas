@@ -8,6 +8,7 @@ import utils
 
 from schemas import Question, Document
 from qdrant_split_base import (
+    setup_qdrant,
     search_qdrant_vector,
     search_qdrant_text,
     search_qdrant_hybrid,
@@ -124,4 +125,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    setup_qdrant()
     main()

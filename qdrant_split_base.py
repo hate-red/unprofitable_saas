@@ -1,22 +1,47 @@
-from langchain_huggingface import HuggingFaceEmbeddings
 from qdrant_client import QdrantClient
 from qdrant_client import models
 
+import httpx
+import math
 import hashlib
 from contextlib import closing
+from itertools import chain
 
 import config
+import utils
+import splitter    
 from schemas import Question, Document
+
 
 COLLECTION = "kb_chunks"
 EMB_SIZE = 1024
 QDRANT_PATH = "./qdrant_chunks"
 
-embedder = HuggingFaceEmbeddings(
-    model_name=config.EMB_MODEL,
-    model_kwargs={"device": "cpu"},
-    encode_kwargs={"normalize_embeddings": True},
-)
+
+def get_embeddings(texts: list[str]) -> list[list[float]]:
+    """Gets embeddings for given texts"""
+    with httpx.Client(timeout=90.0) as client:
+        result = utils.post(client, "/embeddings", config.EMBED_KEY, {
+            "model": config.EMB_MODEL,
+            "input": texts,
+            "encoding_format": "float",
+        })
+
+    vectors: list[list[float] | None] = [None] * len(texts)
+    for position, item in enumerate(result["data"]):
+        index = int(item.get("index", position))
+    
+        if index < 0 or index >= len(texts):
+            raise ValueError("Некорректный индекс embedding")
+    
+        vector = item["embedding"]
+        norm = math.sqrt(sum(float(x) ** 2 for x in vector)) or 1.0
+        vectors[index] = [float(x) / norm for x in vector]
+    
+    if any(v is None for v in vectors):
+        raise ValueError("Получены не все embeddings")
+    
+    return vectors  # type: ignore
 
 
 #Использую формат pointstruct, не вижу смысла колонками, данных всего ничего
@@ -30,16 +55,17 @@ def chunks_to_points(chunks: list[Document]) -> list[models.PointStruct]:
         Qdrant points containing each chunk's ID, vector, and payload.
     """
     points: list[models.PointStruct] = []
-    for doc in chunks:
-        vector = embedder.embed_query(doc.content)
 
-        payload = doc.to_dict()
+    vectors = get_embeddings([chunk.content for chunk in chunks])
+
+    for i, chunk in enumerate(chunks):
+        payload = chunk.to_dict()
 
         point_id = hashlib.md5(
-            f"{doc.metadata['source']}::{doc.content}".encode("utf-8")
+            f"{chunk.metadata['source']}::{chunk.content}".encode("utf-8")
         ).hexdigest()
 
-        points.append(models.PointStruct(id=point_id, vector=vector, payload=payload))
+        points.append(models.PointStruct(id=point_id, vector=vectors[i], payload=payload))
 
     return points
 
@@ -158,7 +184,7 @@ def search_qdrant_vector(
         `Document` objects.
     """
     with closing(QdrantClient(path=QDRANT_PATH)) as client:
-        query_vector = embedder.embed_query(question.content)
+        query_vector = get_embeddings([question.content])[0]
 
         result = client.query_points(
             collection_name=COLLECTION,
@@ -210,7 +236,7 @@ def search_qdrant_hybrid(
     Returns:
         Fused `Document` objects.
     """
-    dense_vector = embedder.embed_query(question.content)
+    dense_vector = get_embeddings([question.content])[0]
 
     with closing(QdrantClient(path=QDRANT_PATH)) as client:
         result = client.query_points(
@@ -234,13 +260,7 @@ def search_qdrant_hybrid(
         return chunks
 
 
-if __name__ == '__main__':
-    from itertools import chain
-
-    import utils
-    import splitter
-    
-    
+def setup_qdrant():
     documents = utils.load_documents(utils.find_file("kb.zip", "knowledge-base.zip", "knowledge_base.zip"))
     chunks = list(chain.from_iterable(splitter.split_document(doc) for doc in documents))
 
@@ -253,9 +273,13 @@ if __name__ == '__main__':
     print(f"В коллекции: {count} точек\n", flush=True)
 
     print("== 3. Просмотр из Qdrant ==", flush=True)
-    view_qdrant(limit=5, show_vector=True)
+    view_qdrant(limit=2, show_vector=True)
 
-    print("== 4. Поиск по Qdrant ==", flush=True)
+
+if __name__ == '__main__':
+    setup_qdrant()
+
+    print("Поиск по Qdrant ==", flush=True)
     question = Question(id='1', content='Какая арендная плата по договору с ООО «Северный Склад» и до какого числа её нужно вносить?')
     results = search_qdrant_text(question, limit=3)
 
