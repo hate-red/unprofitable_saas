@@ -3,10 +3,10 @@ import csv
 import io
 import zipfile
 
+from httpx import Client
 from pathlib import Path
 from xml.etree import ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
 
 import config
 from schemas import Question, Document
@@ -35,7 +35,6 @@ def find_file(*names: str) -> Path:
                 return path
     
     raise FileNotFoundError(f"Не найден один из файлов: {', '.join(names)}")
-
 
 
 def load_questions(path: Path) -> list[Question]:
@@ -88,7 +87,7 @@ def load_documents(path: Path) -> list[Document]:
                 continue
             
             if text.strip():
-                documents.append(Document(name=name, text=text.strip()))
+                documents.append(Document(path=Path(name), content=text, metadata={}))
     
     if not documents:
         raise ValueError("В архиве базы знаний нет читаемых документов")
@@ -96,11 +95,29 @@ def load_documents(path: Path) -> list[Document]:
     return documents
 
 
-def run_workers(questions: list[Question], work):
+def post(client: Client, path: str, key: str, payload: dict) -> dict:
+    if not key:
+        raise ValueError("На платформе отсутствует API-ключ")
+    
+    response = client.post(
+        config.API_BASE + path,
+        headers={"Authorization": "Bearer " + key},
+        json=payload,
+    )
+    response.raise_for_status()
+    
+    return response.json()
+
+
+def run_workers(
+    questions: list[Question], 
+    chunks_per_question: list[list[Document]], 
+    work
+) -> list[str]:
     answers = [config.FALLBACK] * len(questions)
     
     with ThreadPoolExecutor(max_workers=config.MAX_WORKERS) as pool:
-        futures = [pool.submit(work, i, question.content) for i, question in enumerate(questions)]
+        futures = [pool.submit(work, i, question.content, chunks_per_question[i]) for i, question in enumerate(questions)]
     
         for finished, future in enumerate(as_completed(futures), 1):
             index, answer = future.result()

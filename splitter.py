@@ -1,4 +1,3 @@
-from pathlib import Path
 import re
 
 from langchain_core.documents import Document as LCDocument
@@ -27,9 +26,9 @@ def classify(stem: str, head: str) -> str:
 
 
 
-def extract_meta(path: Path, text: str) -> dict:
-    stem = path.stem.split("__")[-1]
-    head = text[:800]
+def extract_meta(document: Document) -> dict:
+    stem = document.path.stem.split("__")[-1]
+    head = document.content[:800]
 
     meta = {
         "source": stem,
@@ -40,17 +39,17 @@ def extract_meta(path: Path, text: str) -> dict:
         meta["doc_id"] = number_doc.group(0)
     
     if meta["doc_type"] == "регламент":
-        low = text[:400].lower()
+        low = document.content[:400].lower()
         meta["status"] = "утратил силу" if "утратил силу" in low else "действующий"
 
         m = re.search(r"Редакция\s+от\s+(\d{2}\.\d{2}\.\d{4})", head)
-        meta["revision"] = m.group(1) if m else None
+        meta["revision"] = m.group(1) if m else None # type: ignore
 
         m = re.search(r"Действует\s+с\s+(\d{2}\.\d{2}\.\d{4})", head)
-        meta["effective_from"] = m.group(1) if m else None
+        meta["effective_from"] = m.group(1) if m else None # type: ignore
 
         m = re.search(r"утрачивает силу(?:\s+с)?\s+(\d{2}\.\d{2}\.\d{4})", head, re.I)
-        meta["effective_to"] = m.group(1) if m else None
+        meta["effective_to"] = m.group(1) if m else None # type: ignore
     
     return meta
 
@@ -69,8 +68,11 @@ _splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
 )
 
 
-def split_document(doc: Document) -> list[LCDocument]:
-    lc_doc = LCDocument(page_content=doc.text, metadata=extract_meta(Path(doc.name), doc.text))
+def split_document(doc: Document) -> list[Document]:
+    lc_doc = LCDocument(page_content=doc.content, metadata=extract_meta(doc))
     chunks = _splitter.split_documents([lc_doc])
-    
+    chunks = [
+        Document(path=doc.path, content=chunk.page_content, metadata=chunk.metadata) 
+        for chunk in chunks
+    ]
     return chunks

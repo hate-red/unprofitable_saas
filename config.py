@@ -42,3 +42,9 @@ CHUNKER = env("CHUNKER", "common")
 SNIPPET_CHARS = 1200
 FALLBACK = "Не удалось получить ответ."
 WORD_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁё]{4,}")
+
+
+project_root = Path(__file__).parent
+
+system_prompt_path = project_root / 'prompts' / 'system.md'
+user_prompt_path = project_root / 'prompts' / 'user.md'

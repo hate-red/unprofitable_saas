@@ -1,5 +1,3 @@
-from itertools import chain
-from langchain_core.documents import Document as LCDocument
 from langchain_huggingface import HuggingFaceEmbeddings
 from qdrant_client import QdrantClient
 from qdrant_client import models
@@ -7,24 +5,22 @@ from qdrant_client import models
 import hashlib
 from contextlib import closing
 
-import utils
-import splitter
+import config
 from schemas import Question, Document
-
 
 COLLECTION = "kb_chunks"
 EMB_SIZE = 1024
 QDRANT_PATH = "./qdrant_chunks"
 
 embedder = HuggingFaceEmbeddings(
-    model_name="BAAI/bge-m3",
+    model_name=config.EMB_MODEL,
     model_kwargs={"device": "cpu"},
     encode_kwargs={"normalize_embeddings": True},
 )
 
 
 #Использую формат pointstruct, не вижу смысла колонками, данных всего ничего
-def chunks_to_points(chunks: list[LCDocument]) -> list[models.PointStruct]:
+def chunks_to_points(chunks: list[Document]) -> list[models.PointStruct]:
     """Convert document chunks into Qdrant points.
 
     Args:
@@ -35,13 +31,12 @@ def chunks_to_points(chunks: list[LCDocument]) -> list[models.PointStruct]:
     """
     points: list[models.PointStruct] = []
     for doc in chunks:
-        vector = embedder.embed_query(doc.page_content)
+        vector = embedder.embed_query(doc.content)
 
-        payload = dict(doc.metadata)
-        payload["content"] = doc.page_content
+        payload = doc.to_dict()
 
         point_id = hashlib.md5(
-            f"{payload.get('source', '')}::{doc.page_content}".encode("utf-8")
+            f"{doc.metadata['source']}::{doc.content}".encode("utf-8")
         ).hexdigest()
 
         points.append(models.PointStruct(id=point_id, vector=vector, payload=payload))
@@ -77,12 +72,11 @@ def save_to_qdrant(
                 vectors_config=models.VectorParams(size=EMB_SIZE, distance=models.Distance.COSINE),
             )
 
-            for field in ("source", "doc_type", "status", "doc_id"):
-                client.create_payload_index(
-                    collection_name=COLLECTION,
-                    field_name=field,
-                    field_schema=models.PayloadSchemaType.KEYWORD,
-                )
+            client.create_payload_index(
+                collection_name=COLLECTION,
+                field_name="metadata",
+                field_schema=models.PayloadSchemaType.KEYWORD,
+            )
 
             client.create_payload_index(
                 collection_name=COLLECTION,
@@ -142,19 +136,17 @@ def view_qdrant(
         if show_vector and isinstance(p.vector, list):
             print(f"vector: len={len(p.vector)}, первые 5={p.vector[:5]}")
 
-        payload = p.payload or {}
-        meta = {k: v for k, v in payload.items() if k != "content"}
-        content = payload.get("content", "")
+        payload = p.payload
 
-        print(f"metadata: {meta}")
-        print(f"content[:{preview_chars}]: {content[:preview_chars]}...")
+        print(f"metadata: {payload['metadata']}") # type: ignore
+        print(f"content[:{preview_chars}]: {payload['content'][:preview_chars]}...") # type: ignore
 
 
 def search_qdrant_vector(
     question: Question,
     limit: int = 5,
     score_threshold: float | None = None,
-) -> list[models.ScoredPoint]:
+) -> list[Document]:
     """Search the collection using a vector embedding of the question.
 
     Args:
@@ -163,7 +155,7 @@ def search_qdrant_vector(
         score_threshold: Optional minimum score for returned points.
 
     Returns:
-        Matching points, including their payloads but not their vectors.
+        `Document` objects.
     """
     with closing(QdrantClient(path=QDRANT_PATH)) as client:
         query_vector = embedder.embed_query(question.content)
@@ -176,11 +168,11 @@ def search_qdrant_vector(
             with_vectors=False,
             score_threshold=score_threshold,
         )
+        chunks = [Document(**point.payload) for point in result.points] # type: ignore
+        return chunks
 
-        return result.points
 
-
-def search_qdrant_text(question: Question, limit: int = 5) -> list[models.ScoredPoint]:
+def search_qdrant_text(question: Question, limit: int = 5) -> list[Document]:
     """Search the collection using its indexed text content.
 
     Args:
@@ -188,7 +180,7 @@ def search_qdrant_text(question: Question, limit: int = 5) -> list[models.Scored
         limit: Maximum number of matching points to return.
 
     Returns:
-        Matching points with their payloads.
+        `Document` objects.
     """
     with closing(QdrantClient(path=QDRANT_PATH)) as client:
         result = client.query_points(
@@ -198,14 +190,15 @@ def search_qdrant_text(question: Question, limit: int = 5) -> list[models.Scored
             limit=limit,
             with_payload=True,
         )
-        return result.points
+        chunks = [Document(**point.payload) for point in result.points] # type: ignore
+        return chunks
 
 
 def search_qdrant_hybrid(
     question: Question, 
     limit: int = 5, 
     prefetch_limit: int = 20
-) -> list[models.ScoredPoint]:
+) -> list[Document]:
     """Search using text and vector queries, combining results with RRF.
 
     Args:
@@ -215,7 +208,7 @@ def search_qdrant_hybrid(
             before fusion.
 
     Returns:
-        Fused matching points with their payloads.
+        Fused `Document` objects.
     """
     dense_vector = embedder.embed_query(question.content)
 
@@ -237,10 +230,17 @@ def search_qdrant_hybrid(
             limit=limit,
             with_payload=True,
         )
-        return result.points
+        chunks = [Document(**point.payload) for point in result.points] # type: ignore
+        return chunks
 
 
 if __name__ == '__main__':
+    from itertools import chain
+
+    import utils
+    import splitter
+    
+    
     documents = utils.load_documents(utils.find_file("kb.zip", "knowledge-base.zip", "knowledge_base.zip"))
     chunks = list(chain.from_iterable(splitter.split_document(doc) for doc in documents))
 
@@ -261,3 +261,4 @@ if __name__ == '__main__':
 
     for match in results:
         print(match)
+        print('\n\n')
